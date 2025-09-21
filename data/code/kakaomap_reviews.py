@@ -1,3 +1,5 @@
+import os
+from datetime import datetime
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
@@ -36,13 +38,6 @@ def search_and_extract_reviews(driver, place_name):
             search_button = driver.find_element(By.ID, "search.keyword.submit")
             driver.execute_script("arguments[0].click();", search_button)
 
-        # 첫 번째 검색 결과의 상세정보 탭으로 이동
-        # 첫 번째 항목의 XPath를 찾아 클릭. XPath는 1부터 시작합니다.
-        detail_link_xpath = '//*[@id="info.search.place.list"]/li[1]/div[5]/div[4]/a[1]'
-        WebDriverWait(driver, 20).until(
-            EC.presence_of_element_located((By.CSS_SELECTOR, ".placelist"))
-            )
-
         # 첫 번째 검색 결과 아이템을 찾습니다.
         first_result_item = WebDriverWait(driver, 20).until(
             EC.presence_of_element_located((By.XPATH, '//*[@id="info.search.place.list"]/li[1]'))
@@ -71,56 +66,65 @@ def search_and_extract_reviews(driver, place_name):
 
         # 리뷰 추출
         reviews = []
-        # 15초 동안 ".list_evaluation > li" 클래스를 가진 요소가 나타날 때까지 기다립니다.
-        try:
-            WebDriverWait(driver, 15).until(
-                EC.presence_of_element_located((By.CSS_SELECTOR, '.list_evaluation > li'))
-            )
-            html = driver.page_source
-            soup = BeautifulSoup(html, 'html.parser')
+        # 리뷰 로딩 대기
+        WebDriverWait(driver, 10).until(
+            EC.presence_of_element_located((By.CSS_SELECTOR, '.list_review > li'))
+        )
 
-            review_items = soup.select('.list_evaluation > li')
-        except:
-            # 리뷰가 아예 없거나 로딩되지 않은 경우
-            print(f"'{place_name}'의 리뷰를 찾을 수 없습니다. (리뷰가 없거나 로딩되지 않음)")
+        # 페이지 소스 가져오기
+        soup = BeautifulSoup(driver.page_source, 'html.parser')
+        review_items = soup.select('.list_review > li')
+
+        if not review_items:
+            print(f"'{place_name}'에는 리뷰가 없습니다.")
+            driver.close()
+            driver.switch_to.window(driver.window_handles[0])
             return []
 
-        if len(review_items) == 0:
-            print(f"'{place_name}'에는 리뷰가 없습니다. (요소는 존재하지만 비어있음)")
-            return []
-
+        # 각 리뷰 항목 추출
         for item in review_items:
             try:
-                # 리뷰 텍스트
-                review_text = item.select_one('.txt_comment > span').get_text(strip=True)
+                # 작성자 이름
+                author_tag = item.select_one('.name_user')
+                if author_tag:
+                    author_name = author_tag.get_text(strip=True).replace("리뷰어 이름,", "").strip()
+                else:
+                    author_name = "NA"
+
                 # 별점
-                rating_score = item.select_one('.num_rate').get_text(strip=True)
+                rating_tag = item.select_one('.starred_grade span:nth-of-type(2)')
+                rating_score = rating_tag.get_text(strip=True) if rating_tag else "NA"
+
                 # 작성 날짜
-                date_text = item.select_one('.info_info > span.time').get_text(strip=True)
+                date_tag = item.select_one('.txt_date')
+                date_text = date_tag.get_text(strip=True) if date_tag else "NA"
+
+                # 리뷰 텍스트
+                review_text_tag = item.select_one('.desc_review')
+                review_text = review_text_tag.get_text(strip=True) if review_text_tag else "NA"
 
                 reviews.append({
                     "식당이름": place_name,
-                    "별점": rating_score,
+                    "리뷰작성자": author_name,
                     "작성날짜": date_text,
+                    "별점": rating_score,
                     "리뷰텍스트": review_text
                 })
             except Exception as e:
                 print(f"리뷰 추출 중 오류 발생: {e}")
                 continue
-        
 
         # 새 탭 닫고 원래 탭으로 돌아가기
         driver.close()
         driver.switch_to.window(driver.window_handles[0])
         time.sleep(1)
-        
+
         return reviews
-    
+
     except Exception as e:
-        print(f"'{place_name}' 검색 또는 추출 중 오류 발생: {e}")
-        driver.close()
-        driver.switch_to.window(driver.window_handles[0])
-        return None
+        print(f"'{place_name}' 리뷰 추출 중 오류 발생: {e}")
+        driver.switch_to.default_content()
+        return []
 
 
 def main():
@@ -137,16 +141,17 @@ def main():
     service = Service(ChromeDriverManager().install())
     driver = webdriver.Chrome(service=service, options=options)
     # 검색할 식당 목록 (10개)
-    restaurant_list = ["성화해장국 인하점"]
+    restaurant_list = ["성화해장국 인하점", "미연팔복반점"]
     
     # WebDriver 초기화
     driver = webdriver.Chrome()
-    driver.get("https://map.kakao.com/")
-    time.sleep(2)
 
     all_reviews = []
     
     for restaurant in restaurant_list:
+        driver.get("https://map.kakao.com/")
+        time.sleep(2)
+        
         print(f"'{restaurant}'의 리뷰를 수집 중...")
         reviews_for_restaurant = search_and_extract_reviews(driver, restaurant)
         if reviews_for_restaurant:
@@ -157,14 +162,20 @@ def main():
     
     # 데이터프레임 생성
     df = pd.DataFrame(all_reviews)
-    print(df)
+
+    # 현재 시간 가져오기 (YYYYMMDD_HHMM)
+    now = datetime.now().strftime("%Y%m%d_%H%M")
+    # 파일명에 시간 포함
+    file_name = f"../restaurant_reviews_{now}.xlsx"
+    # 절대경로 계산
+    abs_path = os.path.abspath(file_name)
 
     # 결과를 XLSX 파일로 저장
-    # try:
-    #     df.to_excel("restaurant_reviews.xlsx", index=False)
-    #     print("모든 리뷰가 'restaurant_reviews.xlsx' 파일로 저장되었습니다.")
-    # except Exception as e:
-    #     print(f"파일 저장 중 오류 발생: {e}")
+    try:
+        df.to_excel(file_name, index=False)
+        print(f"모든 리뷰가 '{abs_path}' 파일로 저장되었습니다.")
+    except Exception as e:
+        print(f"파일 저장 중 오류 발생: {e}")
 
 if __name__ == "__main__":
     main()
