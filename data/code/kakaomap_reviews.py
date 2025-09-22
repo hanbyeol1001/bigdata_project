@@ -140,8 +140,10 @@ def main():
     # WebDriver-manager로 드라이버 자동 설치 및 실행
     service = Service(ChromeDriverManager().install())
     driver = webdriver.Chrome(service=service, options=options)
+
     # 검색할 식당 목록 (10개)
-    restaurant_list = ["성화해장국 인하점", "미연팔복반점"]
+    restaurant_list = ["성화해장국 인하점", "미연팔복반점", "우리소참한우", "닭살부부", "궁중보쌈", "일미닭갈비", 
+                       "매운애갈비찜", "가메이", "백소정 인하대후문점", "면식당 인하대점"]
     
     # WebDriver 초기화
     driver = webdriver.Chrome()
